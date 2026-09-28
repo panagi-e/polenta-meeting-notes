@@ -317,6 +317,8 @@ struct SettingsSheet: View {
 
                 RecordingShortcutSection()
 
+                MeetingPromptSection()
+
                 Section("Appearance") {
                     Picker("Font", selection: $fontDesign) {
                         ForEach(Appearance.designs, id: \.raw) { design in
@@ -469,6 +471,25 @@ struct SettingsSheet: View {
             } catch {
                 importStatus = "Import failed: \(error.localizedDescription)"
             }
+        }
+    }
+}
+
+struct MeetingPromptSection: View {
+    @EnvironmentObject var model: AppModel
+    @AppStorage(MeetingPromptPreference.enabledKey) private var enabled = true
+
+    var body: some View {
+        Section("Meeting detection") {
+            Toggle("Ask to record when a meeting starts", isOn: $enabled)
+                .onChange(of: enabled) { _, _ in model.meetingPrompt.refresh() }
+            Text("A small pop-up appears in the top-right corner, over any app, when a "
+                 + "calendar meeting is due or a call app (Teams, Zoom, Slack, Webex, "
+                 + "FaceTime, or a browser for Meet) starts using the microphone. It "
+                 + "never records without your click. Recording can always be started "
+                 + "by hand or with the shortcut.")
+                .font(.caption).foregroundStyle(.secondary)
+            Button("Show a sample") { model.meetingPrompt.showSample() }
         }
     }
 }
@@ -829,13 +850,7 @@ struct RecordingBar: View {
     }
 
     private func accept(_ offer: CalendarWatcher.Offer) {
-        model.pendingTitle = offer.title
-        model.pendingAttendees = offer.attendees.map {
-            MeetingAttendee(name: $0.name, email: $0.email)
-        }
-        model.pendingAutoStopEnd = offer.end
-        calendar.accepted()
-        model.startRecording(microphone: microphones.selection)
+        model.acceptOffer(offer)
     }
 
     private var recordingControls: some View {

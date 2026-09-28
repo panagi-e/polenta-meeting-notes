@@ -19,6 +19,9 @@ final class AppModel: ObservableObject {
     let calendar = CalendarWatcher()
     let microphones = MicrophoneListModel()
     let libraryChat = LibraryChatModel()
+    /// The floating "record this meeting?" pop-up, shown over whatever app is
+    /// in front when a meeting is detected.
+    private(set) lazy var meetingPrompt = MeetingPromptController(model: self)
 
     /// The meeting's title for a citation link, falling back to the id while
     /// the library list has not loaded it.
@@ -97,6 +100,7 @@ final class AppModel: ObservableObject {
         }
         calendar.isRecording = { [weak self] in self?.capture.isCapturing ?? false }
         calendar.start()
+        meetingPrompt.start()
 
         // Processing happens in the background, so the library keeps itself
         // fresh rather than showing stale statuses until the next click.
@@ -167,6 +171,27 @@ final class AppModel: ObservableObject {
                 : "Imported \(name). It will transcribe and summarise now."
         }
         return "Imported \(imported) meetings. They will process now."
+    }
+
+    // MARK: - Meeting offers
+
+    /// Start recording from a detected meeting, from the pop-up or the strip
+    /// in the window alike.
+    ///
+    /// A calendar offer names the meeting and schedules auto-stop from the
+    /// event. A call offer deliberately does not: startRecording then borrows
+    /// whichever calendar event is happening now, so a Teams call joined late
+    /// is still titled, attended, and auto-stopped from its invite.
+    func acceptOffer(_ offer: CalendarWatcher.Offer) {
+        if offer.fromCalendar {
+            pendingTitle = offer.title
+            pendingAttendees = offer.attendees.map {
+                MeetingAttendee(name: $0.name, email: $0.email)
+            }
+            pendingAutoStopEnd = offer.end
+        }
+        calendar.accepted()
+        startRecording(microphone: microphones.selection)
     }
 
     // MARK: - Recording

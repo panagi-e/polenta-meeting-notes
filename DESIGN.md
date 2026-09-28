@@ -317,6 +317,31 @@ Correcting a wrong auto-assignment records the cluster voiceprint as a negative 
 against the wrongly matched speaker, adds it as a positive example only to the correct
 speaker, and flags the positive voiceprint that drove the false match for review and removal.
 
+## Meeting detection and the record prompt
+
+The app offers to record; it never starts a recording on its own. CalendarWatcher looks every
+five seconds for two triggers. A calendar meeting (EventKit, read-only) is due from five minutes
+before its start to 25 minutes in. A call starts when a call app's own process begins capturing
+audio input: Core Audio's per-process objects (kAudioHardwarePropertyProcessObjectList,
+kAudioProcessPropertyIsRunningInput, kAudioProcessPropertyBundleID, macOS 14) say which process
+is capturing, and MeetingDetection.callApps maps bundle-identifier prefixes to call apps
+(Teams including the teams2.modulehost helper, Zoom, Slack, Webex, FaceTime, Chime, Discord, and
+browsers for web calls). Detection is per app and on the change, so a call already offered never
+repeats and an app that merely runs never counts. The earlier check asked whether the input
+device was busy, which on a machine where something holds the microphone all day (a virtual
+desktop client, another recorder) was always true, so no call was ever detected; anything not in
+the call-app list, this app included, is now ignored.
+
+The offer is shown two ways: the strip in the main window, and a floating, non-activating panel
+(MeetingPromptPanel) in the top-right of the screen under the pointer, on every Space including
+over full-screen apps, that never takes focus from the call. It goes when answered, when the
+meeting stops being due, or when the call app stops capturing. "Not now" on a calendar meeting
+also quiets call prompts until that meeting's end, so one refusal is not asked twice. Accepting a
+calendar offer names the meeting and schedules auto-stop from the event; accepting a call offer
+leaves that to startRecording, which borrows whichever event is happening now. The panel can be
+turned off (UserDefaults meetingPromptEnabled, on by default). The backend's
+calendar/detection.py is an older mirror kept for its AC tests and is not used at runtime.
+
 ## Capture staging and the backend-down path
 
 The app mixes each recording to one 16 kHz mono WAV and writes it to

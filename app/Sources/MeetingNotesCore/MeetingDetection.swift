@@ -1,6 +1,7 @@
-// Meeting detection rules. Pure logic, mirrored by the backend's detection
-// module: a due calendar meeting or a running call app produces a prompt to
-// start recording, never a recording.
+// Meeting detection rules. Pure logic: a due calendar meeting, or a call app
+// starting to use the microphone, produces a prompt to start recording, never
+// a recording. (The backend's calendar/detection.py is an older mirror kept
+// for its AC tests; the app does not use it.)
 
 import Foundation
 
@@ -24,28 +25,66 @@ public enum MeetingDetection {
         now >= start.addingTimeInterval(-margin) && now <= end.addingTimeInterval(margin)
     }
 
-    /// Apps that carry calls. Most of them run all day, so their presence
-    /// alone means nothing.
-    public static let callAppNames: Set<String> = [
-        "zoom.us", "Microsoft Teams", "Teams", "Slack", "FaceTime", "webexmta",
+    /// Apps that carry calls, by bundle identifier, and the name to show.
+    ///
+    /// Matched as a prefix, because an app's audio often runs in a helper
+    /// process with its own identifier (new Teams captures the microphone in
+    /// com.microsoft.teams2.modulehost, Chrome in com.google.Chrome.helper).
+    /// Browsers are here for web calls (Google Meet, Teams or Zoom in a tab):
+    /// a browser taking the microphone is nearly always one.
+    ///
+    /// Anything not listed is ignored, which is what keeps a machine quiet
+    /// where something holds the microphone all day: a virtual desktop client
+    /// (Amazon WorkSpaces), another recorder (Granola), or this app itself.
+    public static let callApps: [(bundlePrefix: String, name: String)] = [
+        ("com.microsoft.teams2", "Microsoft Teams"),  // new Teams
+        ("com.microsoft.teams", "Microsoft Teams"),   // classic Teams
+        ("us.zoom.xos", "Zoom"),
+        ("com.tinyspeck.slackmacgap", "Slack"),
+        ("com.cisco.webexmeetingsapp", "Webex"),
+        ("com.webex.meetingmanager", "Webex"),
+        ("com.apple.FaceTime", "FaceTime"),
+        ("com.apple.avconferenced", "FaceTime"),
+        ("com.amazon.Amazon-Chime", "Amazon Chime"),
+        ("com.hnc.Discord", "Discord"),
+        ("com.google.Chrome", "Google Chrome"),
+        ("com.microsoft.edgemac", "Microsoft Edge"),
+        ("company.thebrowser.Browser", "Arc"),
+        ("com.brave.Browser", "Brave"),
+        ("org.mozilla.firefox", "Firefox"),
+        ("com.apple.Safari", "Safari"),
+        // Safari and other WebKit apps capture the microphone in a shared
+        // WebKit process rather than their own.
+        ("com.apple.WebKit.GPU", "Safari"),
     ]
 
-    /// In a call, not merely running, detected on the change rather than the
-    /// state: a prompt fires when the microphone becomes busy while a call
-    /// app runs, or a call app appears while the microphone is busy. A
-    /// steadily busy microphone (Siri listening, another resident app) never
-    /// triggers on its own, so an idle Slack cannot keep prompting.
-    public static func callPromptTrigger(
-        processNames: [String], microphoneInUse: Bool,
-        previousMicrophoneInUse: Bool?, previousCallApps: Set<String>
-    ) -> String? {
-        guard microphoneInUse else { return nil }
-        let apps = processNames.filter { callAppNames.contains($0) }
-        // The microphone just went live with a call app around.
-        if previousMicrophoneInUse == false, let app = apps.first {
-            return app
+    /// The call app a process belongs to, or nil for anything that is not one.
+    /// A prefix must end at a component boundary, so com.apple.FaceTime does
+    /// not also claim a hypothetical com.apple.FaceTimeHelperX.
+    public static func callAppName(forBundleID bundleID: String) -> String? {
+        for app in callApps {
+            if bundleID == app.bundlePrefix || bundleID.hasPrefix(app.bundlePrefix + ".") {
+                return app.name
+            }
         }
-        // A call app just appeared while the microphone is live.
-        return apps.first { !previousCallApps.contains($0) }
+        return nil
+    }
+
+    /// The call apps among the processes currently capturing audio input.
+    public static func callAppsCapturing(bundleIDs: [String]) -> Set<String> {
+        Set(bundleIDs.compactMap(callAppName(forBundleID:)))
+    }
+
+    /// The call app to prompt for, if one has just started using the
+    /// microphone since the last look.
+    ///
+    /// Detected per app and on the change: a call app that was already
+    /// capturing last time is a call already offered (or already refused),
+    /// and an app merely running never counts. Where several start together
+    /// the choice is stable (alphabetical), so the prompt does not flicker.
+    public static func callPromptTrigger(
+        capturing: Set<String>, previouslyCapturing: Set<String>
+    ) -> String? {
+        capturing.subtracting(previouslyCapturing).sorted().first
     }
 }

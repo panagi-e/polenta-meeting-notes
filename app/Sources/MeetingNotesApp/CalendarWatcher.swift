@@ -1,5 +1,5 @@
-// Watches the macOS calendar store and the running applications, and offers
-// to start recording when a meeting is due or a call app is in use. The
+// Watches the macOS calendar store and which apps are using the microphone,
+// and offers to start recording when a meeting is due or a call starts. The
 // offer carries the invite's title and attendees so speaker naming can use
 // them. Auto-detection is a prompt to start, never an automatic recording.
 //
@@ -7,38 +7,60 @@
 // Calendar (Google, Exchange, iCloud) works with one read-only permission
 // and no OAuth setup.
 
-import AppKit
 import CoreAudio
 import EventKit
 import Foundation
 import MeetingNotesCore
 
-/// Whether any process is capturing from the default input device right now.
-/// Every live call holds the microphone open, muted or not, so this is the
-/// difference between a call app running and a call actually happening.
+/// Which processes are capturing audio input right now, by bundle identifier.
+///
+/// Asked per process (Core Audio's process objects, macOS 14), not per device:
+/// on a machine where something holds the microphone all day (a virtual
+/// desktop client, another recorder), the device is always busy, so "the
+/// microphone became busy" never happens and a call starting in an app that
+/// was already running went unnoticed. Asking which app started capturing
+/// sees the call itself.
 enum MicrophoneActivity {
-    static func defaultInputInUse() -> Bool {
+    static func processesCapturingInput() -> [String] {
+        let system = AudioObjectID(kAudioObjectSystemObject)
         var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mSelector: kAudioHardwarePropertyProcessObjectList,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain)
-        var deviceID = AudioObjectID(kAudioObjectUnknown)
-        var size = UInt32(MemoryLayout<AudioObjectID>.size)
-        guard AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceID) == noErr,
-            deviceID != AudioObjectID(kAudioObjectUnknown)
-        else { return false }
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(system, &address, 0, nil, &size) == noErr,
+              size > 0 else { return [] }
+        var processes = [AudioObjectID](
+            repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(system, &address, 0, nil, &size, &processes) == noErr
+        else { return [] }
+        return processes.compactMap { process in
+            isCapturingInput(process) ? bundleID(of: process) : nil
+        }
+    }
 
-        var runningAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
+    private static func isCapturingInput(_ process: AudioObjectID) -> Bool {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioProcessPropertyIsRunningInput,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain)
         var running: UInt32 = 0
-        var runningSize = UInt32(MemoryLayout<UInt32>.size)
-        guard AudioObjectGetPropertyData(
-            deviceID, &runningAddress, 0, nil, &runningSize, &running) == noErr
-        else { return false }
-        return running != 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        return AudioObjectGetPropertyData(process, &address, 0, nil, &size, &running) == noErr
+            && running != 0
+    }
+
+    private static func bundleID(of process: AudioObjectID) -> String? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioProcessPropertyBundleID,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var value: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        guard AudioObjectGetPropertyData(process, &address, 0, nil, &size, &value) == noErr,
+              let value else { return nil }
+        let bundleID = value.takeRetainedValue() as String
+        return bundleID.isEmpty ? nil : bundleID
     }
 }
 
@@ -46,10 +68,15 @@ enum MicrophoneActivity {
 final class CalendarWatcher: ObservableObject {
     struct Offer: Equatable {
         let key: String
+        /// What to call the meeting in the prompt.
         let title: String
         let reason: String
         let attendees: [OfferAttendee]
         var end: Date?
+        /// A due calendar event, as opposed to a call app starting. Only a
+        /// calendar offer fixes the meeting's title on accept; a call offer
+        /// leaves it to the recording, which borrows the event happening now.
+        var fromCalendar: Bool = false
     }
 
     struct OfferAttendee: Equatable {
@@ -73,8 +100,10 @@ final class CalendarWatcher: ObservableObject {
     private var accessGranted = false
     private var dismissedKeys: Set<String> = []
     private var pollTask: Task<Void, Never>?
-    private var previousMicrophoneInUse: Bool?
     private var previousCallApps: Set<String> = []
+    /// After "Not now" on a calendar meeting, the call that meeting starts
+    /// should not ask again: the answer was already given.
+    private var callPromptsQuietUntil: Date?
 
     func start() {
         pollTask?.cancel()
@@ -82,7 +111,10 @@ final class CalendarWatcher: ObservableObject {
             await self?.requestAccess()
             while let self, !Task.isCancelled {
                 self.poll()
-                try? await Task.sleep(for: .seconds(15))
+                // Often enough that a call is offered within seconds of
+                // starting; each look is a few cheap Core Audio reads and one
+                // calendar query.
+                try? await Task.sleep(for: .seconds(5))
             }
         }
     }
@@ -95,6 +127,9 @@ final class CalendarWatcher: ObservableObject {
     func dismiss() {
         if let offer {
             dismissedKeys.insert(offer.key)
+            if offer.fromCalendar {
+                callPromptsQuietUntil = offer.end
+            }
         }
         offer = nil
     }
@@ -111,10 +146,29 @@ final class CalendarWatcher: ObservableObject {
     }
 
     private func poll() {
+        // Sampled on every look, recording or not, so that stopping a
+        // recording mid-call does not read the ongoing call as a new one.
+        let capturing = MeetingDetection.callAppsCapturing(
+            bundleIDs: MicrophoneActivity.processesCapturingInput())
+        let previouslyCapturing = previousCallApps
+        previousCallApps = capturing
+
         guard !isRecording() else {
             offer = nil
             return
         }
+
+        // A call app that stopped capturing has finished its call: its next
+        // call can ask again, and an offer for this one goes away.
+        dismissedKeys = dismissedKeys.filter { key in
+            guard key.hasPrefix("app:") else { return true }
+            return capturing.contains(String(key.dropFirst("app:".count)))
+        }
+        if let offer, offer.key.hasPrefix("app:"),
+           !capturing.contains(String(offer.key.dropFirst("app:".count))) {
+            self.offer = nil
+        }
+
         if accessGranted, let event = dueEvent() {
             let key = "calendar:\(event.eventIdentifier ?? event.title ?? "meeting")"
             if !dismissedKeys.contains(key) {
@@ -124,41 +178,32 @@ final class CalendarWatcher: ObservableObject {
                     title: title,
                     reason: "\(title) is due in your calendar.",
                     attendees: attendees(of: event),
-                    end: event.endDate)
+                    end: event.endDate,
+                    fromCalendar: true)
                 return
             }
         }
-        let names = NSWorkspace.shared.runningApplications.compactMap(\.localizedName)
-        let microphoneInUse = MicrophoneActivity.defaultInputInUse()
-        let callApps = Set(names.filter { MeetingDetection.callAppNames.contains($0) })
-        defer {
-            previousMicrophoneInUse = microphoneInUse
-            previousCallApps = callApps
+        if offer?.fromCalendar == true {
+            offer = nil  // no longer due, or refused
+        }
+
+        if let quietUntil = callPromptsQuietUntil {
+            if Date() < quietUntil { return }
+            callPromptsQuietUntil = nil
         }
         if let app = MeetingDetection.callPromptTrigger(
-            processNames: names,
-            microphoneInUse: microphoneInUse,
-            previousMicrophoneInUse: previousMicrophoneInUse,
-            previousCallApps: previousCallApps) {
+            capturing: capturing, previouslyCapturing: previouslyCapturing) {
             let key = "app:\(app)"
             if !dismissedKeys.contains(key) {
+                // Named for the calendar meeting happening now, where there
+                // is one, so the prompt says which meeting it would record.
+                let current = currentEvent()
                 offer = Offer(
                     key: key,
-                    title: "Meeting",
-                    reason: "\(app) looks like it is in a call.",
-                    attendees: [])
-                return
+                    title: current?.title ?? "Meeting",
+                    reason: "\(app) is using the microphone.",
+                    attendees: current?.attendees ?? [])
             }
-        }
-        if !microphoneInUse {
-            // The call ended; the next one can prompt again.
-            dismissedKeys = dismissedKeys.filter { !$0.hasPrefix("app:") }
-            if offer?.key.hasPrefix("app:") == true {
-                offer = nil  // the banner does not outlive the call
-            }
-        }
-        if offer?.key.hasPrefix("calendar:") == true {
-            offer = nil
         }
     }
 

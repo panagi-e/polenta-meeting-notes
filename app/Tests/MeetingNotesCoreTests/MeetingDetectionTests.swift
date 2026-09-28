@@ -27,39 +27,62 @@ struct MeetingDetectionTests {
         #expect(!MeetingDetection.isHappeningNow(start: start, end: end, now: end.addingTimeInterval(3600)))
     }
 
-    @Test("a call prompt fires on a change, never on a steady state")
-    func test_call_app_detection() {
-        let slack = ["Finder", "Slack", "Dock"]
+    @Test("call apps are recognised by bundle identifier, helpers included")
+    func test_call_app_names() {
+        // New Teams captures the microphone in a helper process.
+        #expect(MeetingDetection.callAppName(forBundleID: "com.microsoft.teams2.modulehost") == "Microsoft Teams")
+        #expect(MeetingDetection.callAppName(forBundleID: "com.microsoft.teams2") == "Microsoft Teams")
+        #expect(MeetingDetection.callAppName(forBundleID: "com.microsoft.teams") == "Microsoft Teams")
+        #expect(MeetingDetection.callAppName(forBundleID: "us.zoom.xos") == "Zoom")
+        #expect(MeetingDetection.callAppName(forBundleID: "com.google.Chrome.helper") == "Google Chrome")
+        #expect(MeetingDetection.callAppName(forBundleID: "com.apple.WebKit.GPU") == "Safari")
 
-        // Slack sitting idle in the Dock is not a call.
-        #expect(MeetingDetection.callPromptTrigger(
-            processNames: slack, microphoneInUse: false,
-            previousMicrophoneInUse: false, previousCallApps: ["Slack"]) == nil)
+        // What holds the microphone all day on a real machine is not a call.
+        #expect(MeetingDetection.callAppName(forBundleID: "com.amazon.workspaces") == nil)
+        #expect(MeetingDetection.callAppName(forBundleID: "com.granola.app.helper") == nil)
+        #expect(MeetingDetection.callAppName(forBundleID: "co.uk.designturbine.meetingnotes") == nil)
 
-        // Joining a huddle: the microphone goes live with Slack around.
-        #expect(MeetingDetection.callPromptTrigger(
-            processNames: slack, microphoneInUse: true,
-            previousMicrophoneInUse: false, previousCallApps: ["Slack"]) == "Slack")
+        // A prefix only matches at a component boundary.
+        #expect(MeetingDetection.callAppName(forBundleID: "us.zoom.xosfake") == nil)
+    }
 
-        // A machine where something holds the microphone all day: Slack
-        // running is a steady state and never prompts by itself.
-        #expect(MeetingDetection.callPromptTrigger(
-            processNames: slack, microphoneInUse: true,
-            previousMicrophoneInUse: true, previousCallApps: ["Slack"]) == nil)
+    @Test("a call prompt fires when a call app starts using the microphone")
+    func test_call_prompt_trigger() {
+        // The machine this was built for: WorkSpaces and Granola hold the
+        // microphone all day, and Teams runs all day. None of that is a call.
+        let idle = MeetingDetection.callAppsCapturing(bundleIDs: [
+            "com.amazon.workspaces", "com.granola.app.helper",
+        ])
+        #expect(idle.isEmpty)
+        #expect(MeetingDetection.callPromptTrigger(capturing: idle, previouslyCapturing: []) == nil)
 
-        // But Zoom launching into that steady busy state does prompt.
+        // Joining a Teams call: Teams itself starts capturing. The old
+        // device-level check could never see this, because the microphone
+        // device was already busy.
+        let inCall = MeetingDetection.callAppsCapturing(bundleIDs: [
+            "com.amazon.workspaces", "com.granola.app.helper", "com.microsoft.teams2.modulehost",
+        ])
         #expect(MeetingDetection.callPromptTrigger(
-            processNames: slack + ["zoom.us"], microphoneInUse: true,
-            previousMicrophoneInUse: true, previousCallApps: ["Slack"]) == "zoom.us")
+            capturing: inCall, previouslyCapturing: idle) == "Microsoft Teams")
 
-        // The first sample after launch is a baseline, not a change.
-        #expect(MeetingDetection.callPromptTrigger(
-            processNames: slack, microphoneInUse: true,
-            previousMicrophoneInUse: nil, previousCallApps: ["Slack"]) == nil)
+        // Still in the call on the next look: already offered, no repeat.
+        #expect(MeetingDetection.callPromptTrigger(capturing: inCall, previouslyCapturing: inCall) == nil)
 
-        // A busy microphone without a call app (dictation, say) never fires.
+        // The call ends, then the next one prompts again.
+        #expect(MeetingDetection.callPromptTrigger(capturing: idle, previouslyCapturing: inCall) == nil)
         #expect(MeetingDetection.callPromptTrigger(
-            processNames: ["Finder", "Safari"], microphoneInUse: true,
-            previousMicrophoneInUse: false, previousCallApps: []) == nil)
+            capturing: inCall, previouslyCapturing: idle) == "Microsoft Teams")
+    }
+
+    @Test("a web call in a browser prompts too")
+    func test_browser_call() {
+        let meet = MeetingDetection.callAppsCapturing(bundleIDs: ["com.google.Chrome.helper"])
+        #expect(MeetingDetection.callPromptTrigger(capturing: meet, previouslyCapturing: []) == "Google Chrome")
+    }
+
+    @Test("two apps starting together give a stable choice")
+    func test_stable_choice() {
+        let both: Set<String> = ["Zoom", "Microsoft Teams"]
+        #expect(MeetingDetection.callPromptTrigger(capturing: both, previouslyCapturing: []) == "Microsoft Teams")
     }
 }

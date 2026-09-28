@@ -44,6 +44,14 @@ browser call. For an in-person meeting it uses the microphone alone, and a separ
 microphone will give better results than the built-in one when several people are round the
 laptop. You can see input levels for both sources before you rely on them.
 
+You do not have to remember to press it. When a calendar meeting is due, or a call app (Teams,
+Zoom, Slack, Webex, FaceTime, or a browser for Meet or web Teams) starts using the microphone, a
+small pop-up in the top-right corner asks whether to record. It floats over whatever is in front,
+including a full-screen call, without taking the keyboard from it; "Start recording" starts, "Not
+now" leaves that meeting alone. It never records without your click. A call prompt picks up the
+calendar meeting happening at the time, so the recording is still named for the invite. Turn the
+pop-up off, or see a sample, in Settings under Meeting detection.
+
 When you stop, the recording is saved and queued for processing, and you can start the next
 meeting straight away. You do not have to wait for the previous one to finish. Meetings process
 one at a time in the background, and the library shows where each one is up to.
