@@ -115,8 +115,14 @@ final class AppModel: ObservableObject {
 
     private var libraryPoll: Task<Void, Never>?
 
+    /// Polled every few seconds so processing progress shows on its own.
+    /// Only a changed library is published: every publish re-renders each view
+    /// that observes the model (the whole window), and an unconditional one
+    /// every three seconds kept the main thread busy most of the time while
+    /// the app sat idle, growing costlier the longer it ran.
     func refreshLibrary() async {
-        library = (try? await client.library()) ?? library
+        guard let fresh = try? await client.library(), fresh != library else { return }
+        library = fresh
     }
 
     // MARK: - Import
@@ -127,6 +133,12 @@ final class AppModel: ObservableObject {
     func importFiles(_ urls: [URL]) {
         let selection = ImportSelection.from(urls: urls)
         guard !selection.isEmpty else { return }
+        // Acknowledge at once: the backend converts audio before it answers
+        // (about 1.5 s per hour of compressed audio), so without this the
+        // drop looked ignored until the file was in.
+        lastRecordingMessage = selection.count == 1
+            ? "Importing \((selection.audio.first ?? selection.transcripts.first)!.lastPathComponent)…"
+            : "Importing \(selection.count) files…"
         Task {
             var imported = 0
             var lastError: String?

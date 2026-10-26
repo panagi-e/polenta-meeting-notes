@@ -46,11 +46,7 @@ struct MeetingDetailScreen: View {
         VStack(spacing: 0) {
             if let detail {
                 header(detail)
-                Picker("", selection: $tab) {
-                    ForEach(["Summary", "Transcript", "Notes", "Speakers"], id: \.self) { Text($0) }
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal)
+                DetailTabPicker(tab: $tab)
                 content(detail)
                 if !chatDrawerOpen {
                     Divider()
@@ -707,5 +703,21 @@ struct FindReplaceSheet: View {
 
     private func phrase(_ n: Int, _ singular: String, _ plural: String) -> String {
         "\(n) \(n == 1 ? singular : plural)"
+    }
+}
+
+/// The Summary / Transcript / Notes / Speakers switch, as its own view so that
+/// changes elsewhere in the meeting screen (a poll, a draft keystroke) do not
+/// re-measure the segmented control, which is unusually costly in SwiftUI on
+/// macOS. See LibraryGroupingPicker for the same fix in the library.
+private struct DetailTabPicker: View {
+    @Binding var tab: String
+
+    var body: some View {
+        Picker("", selection: $tab) {
+            ForEach(["Summary", "Transcript", "Notes", "Speakers"], id: \.self) { Text($0) }
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal)
     }
 }

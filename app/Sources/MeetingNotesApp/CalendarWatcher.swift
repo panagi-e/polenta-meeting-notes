@@ -145,6 +145,13 @@ final class CalendarWatcher: ObservableObject {
         accessGranted = (try? await store.requestFullAccessToEvents()) ?? false
     }
 
+    /// The poll runs every five seconds and recomputes the offer each time;
+    /// only a different one is published, so the recording bar and the
+    /// pop-up are not redrawn for nothing.
+    private func setOffer(_ new: Offer?) {
+        if offer != new { offer = new }
+    }
+
     private func poll() {
         // Sampled on every look, recording or not, so that stopping a
         // recording mid-call does not read the ongoing call as a new one.
@@ -154,7 +161,7 @@ final class CalendarWatcher: ObservableObject {
         previousCallApps = capturing
 
         guard !isRecording() else {
-            offer = nil
+            setOffer(nil)
             return
         }
 
@@ -166,25 +173,25 @@ final class CalendarWatcher: ObservableObject {
         }
         if let offer, offer.key.hasPrefix("app:"),
            !capturing.contains(String(offer.key.dropFirst("app:".count))) {
-            self.offer = nil
+            setOffer(nil)
         }
 
         if accessGranted, let event = dueEvent() {
             let key = "calendar:\(event.eventIdentifier ?? event.title ?? "meeting")"
             if !dismissedKeys.contains(key) {
                 let title = event.title ?? "Meeting"
-                offer = Offer(
+                setOffer(Offer(
                     key: key,
                     title: title,
                     reason: "\(title) is due in your calendar.",
                     attendees: attendees(of: event),
                     end: event.endDate,
-                    fromCalendar: true)
+                    fromCalendar: true))
                 return
             }
         }
         if offer?.fromCalendar == true {
-            offer = nil  // no longer due, or refused
+            setOffer(nil)  // no longer due, or refused
         }
 
         if let quietUntil = callPromptsQuietUntil {
@@ -198,11 +205,11 @@ final class CalendarWatcher: ObservableObject {
                 // Named for the calendar meeting happening now, where there
                 // is one, so the prompt says which meeting it would record.
                 let current = currentEvent()
-                offer = Offer(
+                setOffer(Offer(
                     key: key,
                     title: current?.title ?? "Meeting",
                     reason: "\(app) is using the microphone.",
-                    attendees: current?.attendees ?? [])
+                    attendees: current?.attendees ?? []))
             }
         }
     }

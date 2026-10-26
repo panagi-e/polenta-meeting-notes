@@ -625,6 +625,25 @@ struct SupervisorBanner: View {
     }
 }
 
+/// The Folders / Date switch above the library. Its own view, reading only
+/// its own setting, so a library refresh never re-measures it: measuring a
+/// segmented control is unusually costly in SwiftUI on macOS (each pass tears
+/// down and rebuilds observation tracking for the segment labels), and it was
+/// the single biggest cost in the idle redraws that made the app slow.
+private struct LibraryGroupingPicker: View {
+    @AppStorage("libraryGrouping") private var grouping = "folders"
+
+    var body: some View {
+        Picker("", selection: $grouping) {
+            Text("Folders").tag("folders")
+            Text("Date").tag("date")
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+    }
+}
+
 struct LibraryList: View {
     @EnvironmentObject var model: AppModel
     // Folders start expanded; a folder the user collapses is remembered here.
@@ -637,13 +656,7 @@ struct LibraryList: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $grouping) {
-                Text("Folders").tag("folders")
-                Text("Date").tag("date")
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
+            LibraryGroupingPicker()
             Divider()
             if grouping == "date" { dateList } else { folderList }
         }

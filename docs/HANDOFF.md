@@ -2,8 +2,8 @@
 
 A running summary for continuing work in a fresh Claude Code session. Pair this with
 `DESIGN.md` (the pinned source of truth for schemas, formats, and architecture) and the git
-log (91 commits, each a self-contained slice with its own tests). **Current runtime version is
-38**; HEAD is on `main` (`3c83852`), pushed to `github.com/martfo/polenta-meeting-notes`. See
+log (94 commits, each a self-contained slice with its own tests). **Current runtime version is
+38**; HEAD is on `main`, pushed to `github.com/martfo/polenta-meeting-notes`. See
 the "Session log" section below for everything done since the app first shipped (runtime
 24 → 38). This doc is maintained by the `handoff` skill (`.claude/skills/handoff/`; a generic
 copy in `~/.claude/skills/handoff/` covers the user's other projects).
@@ -32,7 +32,7 @@ message of the session; `DESIGN.md` reconciles it with the code.
 ## Build / test / ship
 
 - `make gate` — the fast gate (backend pytest fast markers + `swift test`). Single meaning of
-  green. Currently **180 backend + 50 app tests pass**.
+  green. Currently **180 backend + 56 app tests pass**.
 - `make pipeline` — real WhisperX/pyannote against fixtures (needs `uv sync --extra pipeline`,
   the HF token in Keychain, and the pyannote licences accepted). Green as of last run (7 tests),
   and diarisation/embedding run on the Apple GPU (MPS) there.
@@ -149,6 +149,17 @@ plus a long tail of enhancements from a week of real use. Notable subsystems:
 
 ## Key gotchas discovered this session (don't rediscover them)
 
+- **Never publish unchanged state from a polling loop.** Every `@Published` assignment, even of
+  an equal value, re-renders every view observing that object; `library` is on `AppModel`, which
+  the whole window observes. The library poll (3 s), backend health (3 s), and call detection
+  (5 s) all republished unconditionally, so the window redrew constantly while idle. Guard each
+  assignment (`if new != old`). Measure with `sample <pid> 8`: an idle app's main thread should
+  sit in `mach_msg2_trap` almost entirely.
+- **Segmented `Picker`s are expensive to re-measure in SwiftUI on macOS**
+  (`SystemSegmentedControl._overrideSizeThatFits` tears down and rebuilds observation tracking for
+  its labels, and the cost grew with uptime). Keep each one in its own small view that depends
+  only on its own binding/setting (`LibraryGroupingPicker`, `DetailTabPicker`).
+
 - pyannote.audio 4 / current whisperx take `token=`, not `use_auth_token=` (silent auth fail).
 - pyannote 4 file decoding needs torchcodec/ffmpeg libs; we pass **preloaded waveforms**
   instead (`enrolment/embedder.py`, `_load_waveform`).
@@ -255,6 +266,30 @@ resolved to Martin, then the test meeting was deleted again. The dry-run inspect
 bug on its first use (SubRip cue numbers being appended to the previous line of speech); a cue
 number is now recognised by the time line under it, so a spoken line that is only a number
 survives.
+
+**Meeting detection pop-up [app-only]** — a detected meeting used to be offered only in a strip
+inside the main window (behind the call, so never seen), and call detection asked whether the mic
+*device* became busy, which never happens on this Mac because Amazon WorkSpaces and Granola hold
+the mic all day. Now: a floating, non-activating `MeetingPromptPanel` top-right over any app and
+Space; detection asks Core Audio which *process* is capturing input
+(`kAudioHardwarePropertyProcessObjectList` / `kAudioProcessPropertyIsRunningInput` /
+`kAudioProcessPropertyBundleID`) and prompts when a call app's own process starts (Teams via
+`com.microsoft.teams2.modulehost`, Zoom, Slack, Webex, FaceTime, Chime, Discord, browsers);
+5 s poll. Accepting a call offer borrows the calendar event happening now; "Not now" on a calendar
+offer also quiets that meeting's call prompt. Settings, Meeting detection: toggle + "Show a
+sample". Verified: gate, the process listing live, and the sample pop-up on screen (position,
+rendering, "Not now" closes it). A real-meeting trigger was not yet observed.
+
+**Idle slowness fix [app-only]** — after 12 days running, the app took seconds to come to the
+front, open a meeting, or acknowledge a dropped file, and had grown to ~1 GB. `sample` showed the
+main thread 66% busy while idle in the background: constant full-window redraws, dominated by
+re-measuring the library's segmented Folders/Date control, whose cost grew with uptime. Cause:
+three polling loops republished unchanged state (see gotchas). Fix: publish only on change
+(`refreshLibrary`, `BackendSupervisor.checkHealth`, `CalendarWatcher.setOffer`), segmented pickers
+moved into their own views, and an immediate "Importing…" banner on drop (the backend converts
+before replying, ~1.5 s per hour of AAC). Measured idle, 8 s each, same script: old build after
+12 days 66% busy / 991 MB; old build fresh 6.8% busy with 252 redraw samples; new build fresh
+**0.1% busy, 0 redraw samples, 45 MB**. Backend calls were never the problem (6 to 13 ms).
 
 **LLM / summaries / folders**
 - **Summary prompt hardening [25-ish]** — never attribute points/actions to placeholder or

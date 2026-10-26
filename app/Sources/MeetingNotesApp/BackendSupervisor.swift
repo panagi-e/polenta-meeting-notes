@@ -90,7 +90,10 @@ final class BackendSupervisor: ObservableObject {
         do {
             let health = try await client.health()
             let lmstudio = (health["lmstudio"]?.value as? String) ?? "unknown"
-            state = .running(lmstudio: lmstudio)
+            // Checked every three seconds; republishing an unchanged state
+            // would redraw the status banner each time for nothing.
+            let running = State.running(lmstudio: lmstudio)
+            if state != running { state = running }
         } catch {
             if case .running = state {
                 state = .down("The backend stopped answering. Restarting it.")
