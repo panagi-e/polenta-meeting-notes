@@ -109,6 +109,31 @@ def main(config_path: str) -> None:
                 extra={"meeting_id": meeting_id, "stage": "embed"},
             )
 
+    def rebuild_search_index() -> None:
+        """Move an existing vault onto the current passage layout, one
+        meeting at a time, in the background. Library search keeps using the
+        previous index until it finishes; a restart resumes where it stopped."""
+        import logging
+
+        from meetingnotes.vectors.indexer import backfill_index
+
+        try:
+            count = backfill_index(conn, vault, store, text_embedder,
+                                   stop=lambda: shutting_down.is_set())
+            if count:
+                logging.getLogger("meetingnotes").info(
+                    "search index rebuilt for %d meetings", count)
+        except ModuleNotFoundError:
+            logging.getLogger("meetingnotes").warning(
+                "embedding model not installed; search index rebuild skipped")
+        except Exception:
+            logging.getLogger("meetingnotes").warning(
+                "search index rebuild stopped; it resumes next start", exc_info=True)
+
+    import threading
+
+    shutting_down = threading.Event()
+
     stages = build_stages(
         conn, vault, config,
         engine=_Lazy(make_engine),
@@ -124,6 +149,8 @@ def main(config_path: str) -> None:
         on_idle=lambda: enqueue_pending_summaries(conn, lm_client),
     )
     worker.start()
+    if not store.ready:
+        threading.Thread(target=rebuild_search_index, name="index-rebuild", daemon=True).start()
 
     app = create_app(AppState(
         conn=conn, vault=vault, config=config, worker=worker,
@@ -134,6 +161,7 @@ def main(config_path: str) -> None:
     try:
         uvicorn.run(app, host="127.0.0.1", port=config.backend_port, log_config=None)
     finally:
+        shutting_down.set()
         worker.stop()
 
 

@@ -105,7 +105,13 @@ public enum RuntimeLocation {
 /// 38: a written transcript can be imported: drag a markdown or text file onto
 ///     the window (or Settings, Import) and its turns are read into a meeting
 ///     with no audio, then indexed and summarised like a recording.
-public let runtimeVersion = "38"
+/// 39: library search finds what was actually said. Passages are runs of turns
+///     (about 150 words, speakers inline) instead of one per turn; summaries and
+///     notes are searchable; keyword matches are fused with meaning-based search;
+///     the best hits are widened with what was said around them; and the answer
+///     prompt no longer links unrelated passages or reports examples as events.
+///     An existing vault's index is rebuilt in the background on first start.
+public let runtimeVersion = "39"
 
 public protocol RuntimeInstalling {
     /// Fetch the standalone CPython build for Apple Silicon.

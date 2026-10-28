@@ -63,7 +63,7 @@ meeting-notes/
       language/                em dash strip, British pass, dictionary flag, lint
       logging/                 log setup and helpers
       notes/                   notes.md, pasted images, OCR
-      vectors/                 chunking, LanceDB store, bge-m3 indexer
+      vectors/                 passages, LanceDB hybrid store, bge-m3 indexer and rebuild
       calendar/                read-only client and meeting detection
       tools/                   Granola CSV import, written-transcript parsing
       resources/               american_to_british.json, technical_allowlist.txt,
@@ -197,10 +197,45 @@ summary_status values: pending, ready, needs_attention.
 Embedding vectors are not stored in SQLite: each voiceprint is a JSON file under
 speakers/ and embedding_ref is its file name.
 
-## LanceDB
+## LanceDB and library search
 
-One row per transcript chunk: meeting_id, folder_id, chunk_text, speaker, start_s, end_s,
-and the embedding vector.
+Table chunks_v2, one row per passage: meeting_id, folder_id, source (transcript, summary,
+notes, image), seq (order within its source in the meeting), chunk_text, speaker, start_s,
+end_s, and the bge-m3 vector, plus a full-text index on chunk_text (English stemming, stop
+words removed).
+
+Passages (vectors/chunking.py). A transcript passage is a run of consecutive speaker turns of
+about 150 words (at most about 220), each turn on its own line as "Speaker: words", never
+splitting a turn unless it alone is too long; a run of under 8 words (filler: "Yeah.",
+"issue.") is merged into its neighbour, never indexed alone. The summary is one passage per
+section, prefixed "Summary (<title> - <section>):"; placeholder and stock no-speech summaries
+are not indexed. Notes are packed on paragraphs. Pasted-image OCR text is one passage each.
+The first version indexed one passage per speaker turn (about 20 words) from the transcript
+only: retrieval found "And that is to do with Turkey Finance Orchart." for a Turkey question
+but nothing said what the issue was, and one-word turns crowded out the rest.
+
+Indexing. The embed stage indexes the meeting; the summarise stage indexes it again once the
+summary exists (best effort, never failing the meeting); a speaker rename, a summary edit, and
+a notes save re-index it off the request thread. One lock serialises all embedding, since the
+model is shared across the worker, the API, and the rebuild.
+
+Retrieval (llm/librarychat.py, vectors/store.py). Hybrid: the question is searched by meaning
+(vector, 3x the limit) and by its words (full text, the same), within the folder (a prefilter)
+or the whole vault, and the two rankings are fused by reciprocal rank fusion (k = 60). The top
+three keyword matches always make the cut, so a passage naming exactly what was asked about is
+never crowded out by passages merely similar in meaning. The best 12 passages become excerpts:
+the top four transcript hits are widened with the passage either side, adjacent passages in
+one meeting merge into one excerpt, and excerpts are added best first up to about 4,000 words.
+Each excerpt is labelled by meeting and source (Summary, Your notes, Pasted image, Transcript
+from hh:mm:ss). The prompt also requires that an excerpt is only connected to the question's
+subject when it makes that connection itself, that hypothetical examples are reported as
+examples, and explains what summaries, transcripts, and notes each are.
+
+Migration. The first version's table, chunks, is searched (vector only) until a background
+rebuild at backend start has indexed every meeting into chunks_v2; it is resumable (progress
+is the set of meetings already indexed) and then writes lancedb/chunks_v2.ready, rebuilds the
+full-text index, and drops chunks. On the real vault: 186 meetings, 29,915 fragments became
+6,401 passages, about 4 minutes.
 
 ## config.json
 

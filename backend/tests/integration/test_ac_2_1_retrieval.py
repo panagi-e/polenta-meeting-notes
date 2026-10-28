@@ -66,14 +66,21 @@ def test_ac_2_1_a_chunks_embedded_to_lancedb(conn, vault, store, embedder):
     count = index_meeting(conn, vault, store, embedder, meeting_id)
 
     rows = store.rows_for_meeting(meeting_id)
-    assert count == len(rows) == 4, "one chunk per turn in the fixture"
-    for row in rows:
+    assert count == len(rows)
+    transcript = [row for row in rows if row["source"] == "transcript"]
+    # The fixture's four short turns form one passage: a run of turns, not a
+    # fragment per turn, with each speaker named inline.
+    assert len(transcript) == 1
+    for row in transcript:
         assert row["meeting_id"] == meeting_id
         assert row["folder_id"] == clients
         assert row["speaker"].startswith("SPEAKER_")
         assert 0 <= row["start_s"] < row["end_s"]
         assert len(row["vector"]) == 5
-    assert any("hydroponics" in row["chunk_text"] for row in rows)
+        assert row["seq"] == 0
+    text = transcript[0]["chunk_text"]
+    assert "SPEAKER_00: " in text and "SPEAKER_01: " in text
+    assert "hydroponics" in text
 
 
 def test_ac_2_1_b_folder_scoped_retrieval(conn, vault, store, embedder):
@@ -157,10 +164,10 @@ def test_library_prompt_forbids_asserting_negatives():
     """The library prompt tells the model the excerpts are partial and never
     to claim something did not happen, so a retrieval miss cannot become a
     confident false negative."""
-    from meetingnotes.llm.librarychat import assemble_library_messages
+    from meetingnotes.llm.librarychat import Excerpt, assemble_library_messages
 
     system = assemble_library_messages("q", [
-        {"meeting_id": "m1", "speaker": "Martin", "start_s": 0, "chunk_text": "text"},
+        Excerpt("m1", "Transcript from 00:00:00", "Martin: text"),
     ])[0]["content"].lower()
     assert "partial" in system or "incomplete" in system
     assert "did not happen" in system or "not said" in system

@@ -130,6 +130,15 @@ mentioned or what their requirements were. To search across meetings, use the li
 choose whether to look in the current folder or across everything. It defaults to the current
 folder.
 
+Library chat searches the transcripts, the summaries, and your notes, by meaning and by the exact
+words of your question together, so a name such as a country, a system, or a person is always
+matched even when the conversation around it was about something else. The passages it finds are
+widened with what was said either side before the answer is written, and each answer links the
+meetings it drew on. Specific questions work best ("what went wrong with the Turkey upload?"
+rather than "any issues?"), and if you know roughly which meeting it was, its own chat reads the
+whole thing. After updating from an older version the search index is rebuilt once in the
+background (a few minutes); search keeps working on the old index meanwhile.
+
 ## Where your files are
 
 Everything is in the vault. Each meeting has its own folder holding the summary, the

@@ -272,8 +272,8 @@ def create_app(state: AppState) -> FastAPI:
         return [dict(r) for r in rows]
 
     def _reindex(meeting_id: str) -> None:
-        """Re-embed the meeting's search chunks with the resolved names, off
-        the request thread. Derived data only; nothing the user wrote."""
+        """Re-embed the meeting's search passages (after a rename, a summary
+        edit, or a notes save), off the request thread. Derived data only."""
         if state.vector_store is None or state.text_embedder is None:
             return
         import threading
@@ -287,7 +287,7 @@ def create_app(state: AppState) -> FastAPI:
                 import logging
 
                 logging.getLogger("meetingnotes").warning(
-                    "re-indexing after a name change failed",
+                    "re-indexing a meeting for search failed",
                     extra={"meeting_id": meeting_id, "stage": "embed"},
                 )
 
@@ -367,6 +367,7 @@ def create_app(state: AppState) -> FastAPI:
         )
         conn.execute("UPDATE meetings SET summary_edited = 1 WHERE id = ?", (meeting_id,))
         conn.commit()
+        _reindex(meeting_id)  # the edited summary is what search should find
         return {"saved": True}
 
     @app.post("/meetings/{meeting_id}/attendees")
@@ -445,6 +446,7 @@ def create_app(state: AppState) -> FastAPI:
     @app.put("/meetings/{meeting_id}/notes")
     def save_notes(meeting_id: str, request: NotesRequest) -> dict:
         write_notes(vault, meeting_id, request.text)
+        _reindex(meeting_id)  # notes are searchable
         return {"saved": True, "summary_action": _summary_action_for_notes_change(meeting_id)}
 
     @app.post("/meetings/{meeting_id}/notes/image")

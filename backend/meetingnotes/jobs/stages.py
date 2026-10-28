@@ -216,6 +216,19 @@ def build_stages(
         ) if ocr_engine is not None else []
         summarise_meeting(conn, vault, lm_client, meeting_id, transcript, notes, ocr_texts)
 
+        # The embed stage ran before there was a summary; index again so the
+        # summary is searchable too. Best effort: search is derived data and
+        # must never fail a meeting that summarised.
+        if chunk_indexer is not None:
+            try:
+                chunk_indexer(meeting_id)
+            except Exception:
+                import logging
+
+                logging.getLogger("meetingnotes").warning(
+                    "indexing the summary for search failed",
+                    extra={"meeting_id": meeting_id, "stage": "summarise"})
+
         # Precompute and cache the folder suggestion now, while LM Studio is up
         # and the summary is fresh, so the library shows it without a wait when
         # the meeting is opened. Only for an unfiled meeting, and never fatal to
