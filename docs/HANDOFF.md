@@ -2,8 +2,8 @@
 
 A running summary for continuing work in a fresh Claude Code session. Pair this with
 `DESIGN.md` (the pinned source of truth for schemas, formats, and architecture) and the git
-log (94 commits, each a self-contained slice with its own tests). **Current runtime version is
-38**; HEAD is on `main`, pushed to `github.com/martfo/polenta-meeting-notes`. See
+log (96 commits, each a self-contained slice with its own tests). **Current runtime version is
+39**; HEAD is on `main` (the runtime-39 search work is committed locally, not yet pushed). See
 the "Session log" section below for everything done since the app first shipped (runtime
 24 → 38). This doc is maintained by the `handoff` skill (`.claude/skills/handoff/`; a generic
 copy in `~/.claude/skills/handoff/` covers the user's other projects).
@@ -32,7 +32,7 @@ message of the session; `DESIGN.md` reconciles it with the code.
 ## Build / test / ship
 
 - `make gate` — the fast gate (backend pytest fast markers + `swift test`). Single meaning of
-  green. Currently **180 backend + 56 app tests pass**.
+  green. Currently **197 backend + 56 app tests pass**.
 - `make pipeline` — real WhisperX/pyannote against fixtures (needs `uv sync --extra pipeline`,
   the HF token in Keychain, and the pyannote licences accepted). Green as of last run (7 tests),
   and diarisation/embedding run on the Apple GPU (MPS) there.
@@ -60,7 +60,7 @@ message of the session; `DESIGN.md` reconciles it with the code.
 
 The shipped app provisions the Python backend into
 `~/Library/Application Support/MeetingNotes/runtime` on first run. `runtimeVersion` in
-`app/Sources/MeetingNotesCore/Provisioner.swift` (currently **"38"**, with a dated changelog
+`app/Sources/MeetingNotesCore/Provisioner.swift` (currently **"39"**, with a dated changelog
 comment per version) is a marker: bump it whenever backend code changes so the installed app
 re-provisions and picks up the new backend. **App-only changes need no bump; any backend change
 does.** A stale runtime silently runs old backend code — the source of many "why isn't my fix
@@ -149,6 +149,12 @@ plus a long tail of enhancements from a week of real use. Notable subsystems:
 
 ## Key gotchas discovered this session (don't rediscover them)
 
+- **A runtime bump does not re-provision by itself: someone must click "Set up the backend".**
+  On launch the app calls `bootBackend()` whenever a vault is set, so it starts the backend from
+  whatever runtime is on disk (the old one) while the window shows the first-run screen waiting
+  for that click. The `.provisioned` marker stays on the old number until it is clicked; check it
+  after every install. (Candidate fix: auto-provision on an upgrade when the runtime exists and
+  the token is in the Keychain, and do not boot the stale backend meanwhile.)
 - **Never publish unchanged state from a polling loop.** Every `@Published` assignment, even of
   an equal value, re-renders every view observing that object; `library` is on `AppModel`, which
   the whole window observes. The library poll (3 s), backend health (3 s), and call detection
@@ -291,6 +297,24 @@ before replying, ~1.5 s per hour of AAC). Measured idle, 8 s each, same script: 
 12 days 66% busy / 991 MB; old build fresh 6.8% busy with 252 redraw samples; new build fresh
 **0.1% busy, 0 redraw samples, 45 MB**. Backend calls were never the problem (6 to 13 ms).
 
+**Library search rebuilt [39]** — "What are the issues with Turkey?" (DP) failed though a DP
+call discussed a failed Turkey Finance upload. Retrieval ranked the Turkey passage first, but
+passages were single turns (~20 words) so it carried no context, one-word turns filled the other
+slots, and summaries were never indexed; the model then reported an example as an event and
+linked an unrelated passage. Now: passages are runs of turns (~150 words, speakers inline,
+filler merged), summaries (per section) and notes are indexed, search is hybrid (bge-m3 + LanceDB
+full text, RRF, top 3 keyword hits guaranteed), the top transcript hits are widened with their
+neighbours within a 4,000-word budget, and the prompt forbids unsupported links and treats
+examples as examples. An existing vault rebuilds into `chunks_v2` in the background at backend
+start (resumable; the old `chunks` table serves search until done, then is dropped). Verified:
+gate; a scratch rebuild of the real vault (186 meetings: 29,915 fragments to 6,401 passages, ~4
+min); 9 natural questions, answer reaching the model 8/9 vs 3/9 before (the miss was an
+ambiguous question answered from other meetings); the Turkey question end to end through LM
+Studio now gives the upload failure and the PowerPoint size limit. Installed (`37f88f1`) but
+**runtime 39 is not yet provisioned**: the install landed at 02:06 with the screen locked, so the
+setup click is outstanding (see gotchas). After it, watch the backend log for "search index
+rebuilt" and `lancedb/chunks_v2.ready`.
+
 **LLM / summaries / folders**
 - **Summary prompt hardening [25-ish]** — never attribute points/actions to placeholder or
   channel labels (Me, Unassigned, Speaker N, diarisation labels).
@@ -401,7 +425,8 @@ another app is focused. The Console subsystem for capture/tap diagnostics is
   Ocorian. The user imports long recordings (some multi-hour) named by date/time.
 - macOS on an **M3 Ultra (20 P-cores, 60-core GPU, 256 GB)**; AirPods often the input. ffmpeg is
   no longer required (removed in runtime 25) — do not reintroduce a dependency on it.
-- Installed app is **runtime 38** (verified: `.provisioned` marker = 38, venv code current).
+- Installed app binary is **runtime 39**, but the runtime on disk is still **38** until "Set up
+  the backend" is clicked on the first-run screen (see gotchas).
 - HF token stored in Keychain (service `MeetingNotes`, account `huggingface-token`).
 - git identity is set repo-local (Martin / martin@designturbine.co.uk); remote is
   `github.com/martfo/polenta-meeting-notes` over gh HTTPS (the SSH key is not authorised — use
