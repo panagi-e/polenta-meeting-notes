@@ -6,6 +6,8 @@ or across a folder of them. Transcription and speaker separation run on the Appl
 summary is written by a local LLM. Nothing that touches your audio, transcripts, or summaries
 leaves the machine while the app is in use.
 
+What changed recently, newest first, is in [CHANGELOG.md](CHANGELOG.md).
+
 ## What you need
 
 - A Mac running macOS 14.4 or later, Apple Silicon.
