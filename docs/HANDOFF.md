@@ -310,10 +310,10 @@ start (resumable; the old `chunks` table serves search until done, then is dropp
 gate; a scratch rebuild of the real vault (186 meetings: 29,915 fragments to 6,401 passages, ~4
 min); 9 natural questions, answer reaching the model 8/9 vs 3/9 before (the miss was an
 ambiguous question answered from other meetings); the Turkey question end to end through LM
-Studio now gives the upload failure and the PowerPoint size limit. Installed (`37f88f1`) but
-**runtime 39 is not yet provisioned**: the install landed at 02:06 with the screen locked, so the
-setup click is outstanding (see gotchas). After it, watch the backend log for "search index
-rebuilt" and `lancedb/chunks_v2.ready`.
+Studio now gives the upload failure and the PowerPoint size limit. Installed (`37f88f1`) and
+provisioned 2026-10-28 (after the setup click, see gotchas): the live rebuild took ~4 min for 186
+meetings, `chunks_v2.ready` written and the legacy table dropped, and the live Turkey question in
+the DP folder returns the upload failure, the size limit and the Aug 25 hypothetical.
 
 **LLM / summaries / folders**
 - **Summary prompt hardening [25-ish]** — never attribute points/actions to placeholder or
@@ -425,8 +425,8 @@ another app is focused. The Console subsystem for capture/tap diagnostics is
   Ocorian. The user imports long recordings (some multi-hour) named by date/time.
 - macOS on an **M3 Ultra (20 P-cores, 60-core GPU, 256 GB)**; AirPods often the input. ffmpeg is
   no longer required (removed in runtime 25) — do not reintroduce a dependency on it.
-- Installed app binary is **runtime 39**, but the runtime on disk is still **38** until "Set up
-  the backend" is clicked on the first-run screen (see gotchas).
+- Installed app and provisioned runtime are both **39**; the vault's search index is `chunks_v2`
+  (rebuilt 2026-10-28).
 - HF token stored in Keychain (service `MeetingNotes`, account `huggingface-token`).
 - git identity is set repo-local (Martin / martin@designturbine.co.uk); remote is
   `github.com/martfo/polenta-meeting-notes` over gh HTTPS (the SSH key is not authorised — use
